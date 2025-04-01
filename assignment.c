@@ -12,6 +12,7 @@ struct Process {
     int ioInterval, ioDuration;
     int waitingTime, turnaroundTime, completionTime, responseTime;
     int executed;
+    int quantum;
 };
 
 struct Process processes[MAX_PROCESSES];
@@ -166,18 +167,107 @@ void roundRobin() {
     }
     printProcesses();
 }
+void ino(struct Process* p1, int auxQueue[], int* auxRear) {
+    if (p1->ioDuration > 0) {
+        p1->ioDuration--;  // Decrease I/O time
+        if (p1->ioDuration == 0) {
+            auxQueue[(*auxRear)++] = p1 - processes;  // Move to auxiliary queue
+        }
+    }
+}
+
+void execution(struct Process* p1, int* time, int queue[], int* rear, int auxQueue[], int* auxRear) {
+    p1->quantum = QUANTUM;  
+    while (p1->quantum > 0 && p1->remainingTime > 0) {
+        p1->remainingTime -= 1;
+        p1->quantum -= 1;
+        (*time) += 1;
+
+        // If process requires I/O
+        if (p1->ioInterval > 0 && (p1->burstTime - p1->remainingTime) % p1->ioInterval == 0) {
+            ino(p1, auxQueue, auxRear);  // Move to auxiliary queue
+            return;
+        }
+    }
+
+    // If process still has remaining time, re-add to queue
+    if (p1->remainingTime > 0) {
+        queue[(*rear)++] = p1 - processes;
+    } else {
+        p1->executed = 1;
+        p1->completionTime = *time;
+    }
+}
 
 void virtualRoundRobin() {
     printf("\nExecuting Virtual Round Robin (Quantum = %d)...\n", QUANTUM);
-    roundRobin(); 
+
+    int completed = 0, vrrtime = 0;
+    int queue[MAX_PROCESSES], front = 0, rear = 0;
+    int auxQueue[MAX_PROCESSES], auxFront = 0, auxRear = 0;  // Auxiliary Queue
+
+    // Enqueue initially arriving processes
+    for (int i = 0; i < processCount; i++) {
+        if (processes[i].arrivalTime <= vrrtime) {
+            queue[rear++] = i;
+        }
+    }
+
+    while (completed < processCount) {
+        // Process Auxiliary Queue first (higher priority)
+        if (auxFront < auxRear) {
+            int index = auxQueue[auxFront++];
+            struct Process* p = &processes[index];
+            execution(p, &vrrtime, queue, &rear, auxQueue, &auxRear);
+            continue;  // Give priority to auxQueue processes
+        }
+
+        if (front == rear) {  
+            vrrtime++;  // Move time forward if no processes are ready
+            continue;
+        }
+
+        int index = queue[front++];
+        struct Process* p = &processes[index];
+
+        if (p->responseTime == -1) 
+            p->responseTime = vrrtime - p->arrivalTime;
+
+        execution(p, &vrrtime, queue, &rear, auxQueue, &auxRear);
+
+        if (p->remainingTime == 0) {
+            p->turnaroundTime = vrrtime - p->arrivalTime;
+            p->waitingTime = p->turnaroundTime - p->burstTime;
+            completed++;
+        }
+
+        // Add newly arriving processes
+        for (int i = 0; i < processCount; i++) {
+            if (!processes[i].executed && processes[i].arrivalTime <= vrrtime && processes[i].remainingTime > 0) {
+                bool alreadyQueued = false;
+                for (int j = front; j < rear; j++) {
+                    if (queue[j] == i) {
+                        alreadyQueued = true;
+                        break;
+                    }
+                }
+                if (!alreadyQueued) {
+                    queue[rear++] = i;
+                }
+            }
+        }
+    }
+
+    printProcesses();
 }
 
-int main() {
-    readData("processes.txt");
+
+int main(int argc , char *argv[]) {
+    readData(argv[1]);
 
     sjf();
     srtf();
-    roundRobin();
+    // roundRobin();
     virtualRoundRobin();
 
     return 0;
